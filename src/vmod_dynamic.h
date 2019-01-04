@@ -45,6 +45,7 @@ struct dynamic_ref {
 	VTAILQ_ENTRY(dynamic_ref)	list;
 	struct dynamic_backend		*be;
 	unsigned			mark;
+	unsigned			weight;
 };
 
 enum dynamic_status_e {
@@ -61,7 +62,8 @@ enum dynamic_share_e {
 
 enum dynamic_algorithm_e {
 	RR,
-	LEAST
+	LEAST,
+	WEIGHTED_LEAST
 };
 
 struct dynamic_domain {
@@ -100,6 +102,8 @@ struct vmod_dynamic_director {
 	VCL_DURATION				domain_usage_tmo;
 	VCL_DURATION				first_lookup_tmo;
 	unsigned				max_connections;
+	unsigned				slow_start_max_connections;
+	double					slow_start_percentage;
 	unsigned				proxy_header;
 	VTAILQ_ENTRY(vmod_dynamic_director)	list;
 	VTAILQ_HEAD(,dynamic_domain)		active_domains;
