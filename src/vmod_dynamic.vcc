@@ -173,7 +173,8 @@ $Object director(
 	DURATION domain_usage_timeout	= 7200,
 	DURATION first_lookup_timeout	= 10,
 	INT max_connections		= 0,
-	INT proxy_header		= 0)
+	INT proxy_header		= 0,
+	ENUM { RR, LEAST } algorithm = "RR")
 
 Description
 	Create a DNS director.

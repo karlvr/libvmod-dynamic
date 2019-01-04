@@ -59,6 +59,11 @@ enum dynamic_share_e {
 	HOST
 };
 
+enum dynamic_algorithm_e {
+	RR,
+	LEAST
+};
+
 struct dynamic_domain {
 	unsigned			magic;
 #define DYNAMIC_DOMAIN_MAGIC		0x1bfe1345
@@ -105,6 +110,7 @@ struct vmod_dynamic_director {
 	struct vclref				*vclref;
 	volatile unsigned			active;
 	volatile unsigned			debug;
+	enum dynamic_algorithm_e	algorithm;
 };
 
 VTAILQ_HEAD(vmod_dynamic_head, vmod_dynamic_director) objects;
