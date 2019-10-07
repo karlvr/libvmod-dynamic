@@ -117,13 +117,38 @@ static const struct vdi_methods vmod_dynamic_methods[1] = {{
  * Director implementation
  */
 
+static const struct director * v_matchproto_(vdi_resolve_f)
+dynamic_resolve_rr(struct dynamic_domain *dom)
+{
+	struct dynamic_ref *next;
+
+	next = dom->current;
+
+	do {
+		if (next != NULL)
+			next = VTAILQ_NEXT(next, list);
+		if (next == NULL)
+			next = VTAILQ_FIRST(&dom->refs);
+	} while (next != dom->current &&
+	    !next->be->dir->healthy(next->be->dir, NULL, NULL));
+
+	dom->current = next;
+
+	if (next != NULL &&
+	    !next->be->dir->healthy(next->be->dir, NULL, NULL))
+		next = NULL;
+
+	assert(next == NULL || next->be->dir != NULL);
+	return (next == NULL ? NULL : next->be->dir);
+}
+
 static VCL_BACKEND v_matchproto_(vdi_resolve_f)
 dynamic_resolve(VRT_CTX, VCL_BACKEND d)
 {
 	struct dynamic_domain *dom;
-	struct dynamic_ref *next;
 	double deadline;
 	int ret;
+	const struct director *result;
 
 	CHECK_OBJ_NOTNULL(ctx, VRT_CTX_MAGIC);
 	CHECK_OBJ_NOTNULL(d, DIRECTOR_MAGIC);
@@ -144,26 +169,12 @@ dynamic_resolve(VRT_CTX, VCL_BACKEND d)
 
 	if (dom->current == NULL)
 		dom->current = VTAILQ_FIRST(&dom->refs);
-	next = dom->current;
-
-	do {
-		if (next != NULL)
-			next = VTAILQ_NEXT(next, list);
-		if (next == NULL)
-			next = VTAILQ_FIRST(&dom->refs);
-	} while (next != dom->current &&
-		 !VRT_Healthy(ctx, next->be->dir, NULL));
-
-	dom->current = next;
-
-	if (next != NULL &&
-	    !VRT_Healthy(ctx, next->be->dir, NULL))
-		next = NULL;
+	
+	result = dynamic_resolve_rr(dom);
 
 	Lck_Unlock(&dom->mtx);
 
-	assert(next == NULL || next->be->dir != NULL);
-	return (next == NULL ? NULL : next->be->dir);
+	return result;
 }
 
 static VCL_BOOL v_matchproto_(vdi_healthy_f)
