@@ -223,7 +223,8 @@ $Object director(
 	INT max_connections			= 0,
 	INT proxy_header			= 0,
 	BLOB resolver				= NULL,
-	ENUM { cfg, dns, min, max } ttl_from	= "cfg")
+	ENUM { cfg, dns, min, max } ttl_from	= "cfg",
+	ENUM { RR, LEAST } algorithm = "RR")
 
 Description
 	Create a DNS director.
