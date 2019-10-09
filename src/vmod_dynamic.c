@@ -119,7 +119,7 @@ static const struct vdi_methods vmod_dynamic_methods[1] = {{
  */
 
 static const struct director * v_matchproto_(vdi_resolve_f)
-dynamic_resolve_rr(struct dynamic_domain *dom)
+dynamic_resolve_rr(VRT_CTX, struct dynamic_domain *dom)
 {
 	struct dynamic_ref *next;
 
@@ -130,13 +130,11 @@ dynamic_resolve_rr(struct dynamic_domain *dom)
 			next = VTAILQ_NEXT(next, list);
 		if (next == NULL)
 			next = VTAILQ_FIRST(&dom->refs);
-	} while (next != dom->current &&
-	    !next->be->dir->healthy(next->be->dir, NULL, NULL));
+	} while (next != dom->current && !VRT_Healthy(ctx, next->be->dir, NULL));
 
 	dom->current = next;
 
-	if (next != NULL &&
-	    !next->be->dir->healthy(next->be->dir, NULL, NULL))
+	if (next != NULL && !VRT_Healthy(ctx, next->be->dir, NULL))
 		next = NULL;
 
 	assert(next == NULL || next->be->dir != NULL);
@@ -144,7 +142,7 @@ dynamic_resolve_rr(struct dynamic_domain *dom)
 }
 
 static const struct director * v_matchproto_(vdi_resolve_f)
-dynamic_resolve_leastconn(struct dynamic_domain *dom)
+dynamic_resolve_leastconn(VRT_CTX, struct dynamic_domain *dom)
 {
 	struct dynamic_ref *next;
 	struct dynamic_ref *best_next;
@@ -160,7 +158,7 @@ dynamic_resolve_leastconn(struct dynamic_domain *dom)
 		if (next == NULL)
 			next = VTAILQ_FIRST(&dom->refs);
 
-		if (next->be->dir->healthy(next->be->dir, NULL, NULL)) {
+		if (VRT_Healthy(ctx, next->be->dir, NULL)) {
 			if (VALID_OBJ((struct backend *)next->be->dir->priv, BACKEND_MAGIC)) {
 				struct backend *be;
 				unsigned connections_available;
@@ -213,10 +211,10 @@ dynamic_resolve(VRT_CTX, VCL_BACKEND d)
 	
 	result = NULL;
 	if (dom->obj->algorithm == LEAST) {
-		result = dynamic_resolve_leastconn(dom);
+		result = dynamic_resolve_leastconn(ctx, dom);
 	}
 	if (result == NULL) {
-		result = dynamic_resolve_rr(dom);
+		result = dynamic_resolve_rr(ctx, dom);
 	}
 
 	Lck_Unlock(&dom->mtx);
