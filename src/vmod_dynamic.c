@@ -43,12 +43,14 @@
 #include <string.h>
 
 #include <cache/cache.h>
+#include <cache/cache_backend.h>
 
 #include <vsb.h>
 #include <vcl.h>
 #include <vsa.h>
 #include <vtim.h>
 #include <vtcp.h>
+#include <vrnd.h>
 
 #include "vcc_dynamic_if.h"
 #include "dyn_resolver.h"
@@ -119,6 +121,9 @@ dynamic_resolve_rr(VRT_CTX, struct dynamic_domain *dom)
 	struct dynamic_ref *next;
 	VCL_BACKEND dir;
 
+	if (dom->current == NULL)
+		dom->current = VTAILQ_FIRST(&dom->refs);
+
 	next = dom->current;
 
 	do {
@@ -136,6 +141,147 @@ dynamic_resolve_rr(VRT_CTX, struct dynamic_domain *dom)
 
 	dir = next->be->dir;
 	return (dir);
+}
+
+/** Returns the number of connections available for the given domain and backend ref. */
+static unsigned dynamic_connections_available(struct dynamic_domain *dom, struct dynamic_ref *r, unsigned max_connections)
+{
+	struct backend *be;
+	unsigned n_conn;
+
+	CAST_OBJ_NOTNULL(be, r->be->dir->priv, BACKEND_MAGIC);
+	n_conn = be->n_conn;
+
+	if (n_conn >= max_connections) {
+		/* Already at max_connections, so indicate no available connections */
+		return 0;
+	} else {
+		return max_connections - n_conn;
+	}
+}
+
+/** Return the effective number of max_connections to use in our least connections algorithm. */
+static unsigned dynamic_effective_max_connections(VRT_CTX, struct dynamic_domain *dom)
+{
+	struct dynamic_ref *r;
+	unsigned max_connections;
+
+	max_connections = dom->obj->max_connections;
+	if (max_connections > 0) {
+		/* There is an explicit max_connections, so use it. */
+		return max_connections;
+	}
+
+	/* Calcuate a max_connections based on current connections per backend. */
+	VTAILQ_FOREACH(r, &dom->refs, list) {
+		if (VRT_Healthy(ctx, r->be->dir, NULL)) {
+			unsigned n_conn;
+			struct backend *be;
+
+			CAST_OBJ_NOTNULL(be, r->be->dir->priv, BACKEND_MAGIC);
+			n_conn = be->n_conn;
+			if (n_conn > max_connections) {
+				max_connections = n_conn;
+			}
+		}
+	}
+
+	/* Adjust max_connections assuming we're at 80% load (so 25% bigger than our current
+	   number of connections) so we indicate that there is room for more connections
+	   while also staying in a sensible scale.
+	 */
+	max_connections = max_connections * 1.25;
+
+	return max_connections;
+}
+
+static const struct director * v_matchproto_(vdi_resolve_f)
+dynamic_resolve_leastconn(VRT_CTX, struct dynamic_domain *dom)
+{
+	struct dynamic_ref *next;
+	struct dynamic_ref *best_next;
+	unsigned most_connections_available;
+	unsigned max_connections;
+	
+	best_next = NULL;
+	most_connections_available = 0;
+
+	max_connections = dynamic_effective_max_connections(ctx, dom);
+	VTAILQ_FOREACH(next, &dom->refs, list) {
+		if (VRT_Healthy(ctx, next->be->dir, NULL)) {
+			unsigned connections_available;
+
+			connections_available = dynamic_connections_available(dom, next, max_connections);
+			if (connections_available > most_connections_available) {
+				best_next = next;
+				most_connections_available = connections_available;
+			}
+		}
+	}
+
+	if (best_next != NULL) {
+		assert(best_next->be->dir != NULL);
+		return best_next->be->dir;
+	}
+
+	/* Fallback to RR if no connections are available. */
+	return dynamic_resolve_rr(ctx, dom);
+}
+
+static const struct director * v_matchproto_(vdi_resolve_f)
+dynamic_resolve_weighted_leastconn(VRT_CTX, struct dynamic_domain *dom)
+{
+	struct dynamic_ref *r;
+	unsigned max_connections;
+	unsigned total_connections_available;
+	unsigned chosen_connection_number;
+	double rand;
+	
+	total_connections_available = 0;
+	max_connections = dynamic_effective_max_connections(ctx, dom);
+
+	VTAILQ_FOREACH(r, &dom->refs, list) {
+		CHECK_OBJ_NOTNULL(r->be->dir, DIRECTOR_MAGIC);
+
+		if (VRT_Healthy(ctx, r->be->dir, NULL)) {
+			unsigned connections_available;
+
+			connections_available = dynamic_connections_available(dom, r, max_connections);
+			r->weight = connections_available;
+			total_connections_available += connections_available;
+		} else {
+			r->weight = 0;
+		}
+	}
+
+	rand = scalbn(VRND_RandomTestable(), -31);
+	assert(rand >= 0 && rand < 1.0);
+	chosen_connection_number = total_connections_available * rand;
+
+	total_connections_available = 0;
+
+	VTAILQ_FOREACH(r, &dom->refs, list) {
+		unsigned weight;
+
+		CHECK_OBJ_NOTNULL(r->be->dir, DIRECTOR_MAGIC);
+		
+		weight = r->weight;
+		if (weight > 0) {
+			total_connections_available += weight;
+
+			if (total_connections_available >= chosen_connection_number) {
+				break;
+			}
+		}
+	}
+
+	if (r != NULL) {
+		assert(r->be->dir != NULL);
+		return r->be->dir;
+	}
+
+	/* Fallback to RR if no connections are available. */
+	return dynamic_resolve_rr(ctx, dom);
 }
 
 static VCL_BACKEND v_matchproto_(vdi_resolve_f)
@@ -162,10 +308,18 @@ dynamic_resolve(VRT_CTX, VCL_BACKEND d)
 		return (NULL);
 	}
 
-	if (dom->current == NULL)
-		dom->current = VTAILQ_FIRST(&dom->refs);
-
-	dir = dynamic_resolve_rr(ctx, dom);
+	dir = NULL;
+	switch (dom->obj->algorithm) {
+		case WEIGHTED_LEAST:
+			dir = dynamic_resolve_weighted_leastconn(ctx, dom);
+			break;
+		case LEAST:
+			dir = dynamic_resolve_leastconn(ctx, dom);
+			break;
+		case RR:
+			dir = dynamic_resolve_rr(ctx, dom);
+			break;
+	}
 
 	Lck_Unlock(&dom->mtx);
 
@@ -838,6 +992,21 @@ dynamic_ttl_parse(const char *ttl_s)
 	INCOMPL();
 }
 
+static inline enum dynamic_algorithm_e
+dynamic_algorithm_parse(const char *algorithm_s)
+{
+	if (strcmp("RR", algorithm_s) == 0) {
+		return RR;
+	} else if (strcmp("LEAST", algorithm_s) == 0) {
+		return LEAST;
+	} else if (strcmp("WEIGHTED_LEAST", algorithm_s) == 0) {
+		return WEIGHTED_LEAST;
+	} else {
+		INCOMPL();
+		NEEDLESS(return(0));
+	}
+}
+
 
 VCL_VOID v_matchproto_()
 vmod_director__init(VRT_CTX,
@@ -858,6 +1027,7 @@ vmod_director__init(VRT_CTX,
     VCL_INT proxy_header,
     VCL_BLOB resolver,
     VCL_ENUM ttl_from_s,
+	VCL_ENUM algorithm_s,
     VCL_DURATION retry_after)
 {
 	struct vmod_dynamic_director *obj;
@@ -924,6 +1094,7 @@ vmod_director__init(VRT_CTX,
 	obj->max_connections = (unsigned)max_connections;
 	obj->proxy_header = (unsigned)proxy_header;
 	obj->ttl_from = dynamic_ttl_parse(ttl_from_s);
+	obj->algorithm = dynamic_algorithm_parse(algorithm_s);
 
 	if (resolver != NULL) {
 		obj->resolver = &res_getdns;

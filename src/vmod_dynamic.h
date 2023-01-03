@@ -49,6 +49,7 @@ struct dynamic_ref {
 	VTAILQ_ENTRY(dynamic_ref)	list;
 	struct dynamic_backend		*be;
 	unsigned			mark;
+	unsigned			weight;
 };
 
 enum dynamic_status_e {
@@ -68,6 +69,12 @@ enum dynamic_ttl_e {
 	dns,
 	min,
 	max
+};
+
+enum dynamic_algorithm_e {
+	RR,
+	LEAST,
+	WEIGHTED_LEAST
 };
 
 struct dynamic_domain {
@@ -180,6 +187,7 @@ struct vmod_dynamic_director {
 	const struct res_cb			*resolver;
 	struct VPFX(dynamic_resolver)		*resolver_inst;
 	enum dynamic_ttl_e			ttl_from;
+	enum dynamic_algorithm_e	algorithm;
 };
 
 VTAILQ_HEAD(vmod_dynamic_head, vmod_dynamic_director);
