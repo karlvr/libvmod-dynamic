@@ -109,6 +109,37 @@ static struct vsc_seg * vsc = NULL;
  * Director implementation
  */
 
+static const struct director * v_matchproto_(vdi_resolve_f)
+dynamic_resolve_rr(VRT_CTX, struct dynamic_domain *dom)
+{
+	struct dynamic_ref *next;
+	VCL_BACKEND dir;
+
+	if (dom->current == NULL)
+		dom->current = VTAILQ_FIRST(&dom->refs);
+	next = dom->current;
+
+	do {
+		CHECK_OBJ_ORNULL(next, DYNAMIC_REF_MAGIC);
+		if (next != NULL)
+			next = VTAILQ_NEXT(next, list);
+		if (next == NULL)
+			next = VTAILQ_FIRST(&dom->refs);
+	} while (next != dom->current &&
+		 !VRT_Healthy(ctx, next->dir, NULL));
+
+	dom->current = next;
+
+	if (next == NULL)
+		return (NULL);
+	
+	CHECK_OBJ(next, DYNAMIC_REF_MAGIC);
+
+	dir = next->dir;
+
+	return (dir);
+}
+
 void
 dynamic_wait_active(struct dynamic_domain *dom)
 {
@@ -128,7 +159,6 @@ static VCL_BACKEND v_matchproto_(vdi_resolve_f)
 dynamic_resolve(VRT_CTX, VCL_BACKEND d)
 {
 	struct dynamic_domain *dom;
-	struct dynamic_ref *next;
 	VCL_BACKEND dir;
 
 	CHECK_OBJ_NOTNULL(ctx, VRT_CTX_MAGIC);
@@ -143,30 +173,10 @@ dynamic_resolve(VRT_CTX, VCL_BACKEND d)
 		Lck_Unlock(&dom->mtx);
 		return (NULL);
 	}
-
-	if (dom->current == NULL)
-		dom->current = VTAILQ_FIRST(&dom->refs);
-	next = dom->current;
-
-	do {
-		CHECK_OBJ_ORNULL(next, DYNAMIC_REF_MAGIC);
-		if (next != NULL)
-			next = VTAILQ_NEXT(next, list);
-		if (next == NULL)
-			next = VTAILQ_FIRST(&dom->refs);
-	} while (next != dom->current &&
-		 !VRT_Healthy(ctx, next->dir, NULL));
-
-	dom->current = next;
+	
+	dir = dynamic_resolve_rr(ctx, dom);
 
 	Lck_Unlock(&dom->mtx);
-
-	if (next == NULL)
-		return (NULL);
-
-	CHECK_OBJ(next, DYNAMIC_REF_MAGIC);
-
-	dir = next->dir;
 
 	return (dir);
 }
