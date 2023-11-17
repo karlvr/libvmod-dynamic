@@ -246,7 +246,8 @@ $Object director(
 	ENUM { cfg, dns, min, max } ttl_from	= "cfg",
 	DURATION retry_after			= 30,
 	BACKEND via				= NULL,
-	INT keep				= 3)
+	INT keep				= 3,
+	ENUM { RR, LEAST, WEIGHTED_LEAST } algorithm = "RR")
 
 Description
 	Create a DNS director.
@@ -321,6 +322,18 @@ Parameters:
 	  as the DNS ttl.
 
 	  For no *resolver*, only "cfg" is valid.
+
+	- *algorithm*
+
+	  Load balancing algorithm to use. Defaults to round-robin, which cycles between
+	  each healthy backend.
+
+	  LEAST chooses the healthy backend with the most number of connections available
+	  (i.e. the difference between ``max_connections`` and the backends current connections).
+	  The algorithm works in a similar way if ``max_connections`` isn't set.
+
+	  WEIGHTED_LEAST randomly chooses a healthy backend with weighting based on the number of
+	  connections available.
 
 	- *retry_after*
 

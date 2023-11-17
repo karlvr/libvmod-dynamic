@@ -50,6 +50,7 @@ struct dynamic_ref {
 	VCL_BACKEND			dir;
 	// if via is used
 	const struct suckaddr		*sa;
+	unsigned			weight;
 };
 
 enum dynamic_status_e {
@@ -71,6 +72,12 @@ enum dynamic_ttl_e {
 	dns,
 	min,
 	max
+};
+
+enum dynamic_algorithm_e {
+	RR,
+	LEAST,
+	WEIGHTED_LEAST
 };
 
 struct dynamic_domain {
@@ -183,6 +190,7 @@ struct vmod_dynamic_director {
 	const struct res_cb			*resolver;
 	struct VPFX(dynamic_resolver)		*resolver_inst;
 	enum dynamic_ttl_e			ttl_from;
+	enum dynamic_algorithm_e	algorithm;
 };
 
 VTAILQ_HEAD(vmod_dynamic_head, vmod_dynamic_director);
