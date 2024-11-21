@@ -256,7 +256,7 @@ static struct dynamic_ref *
 dom_find_leastconn(VRT_CTX, struct dynamic_domain *dom)
 {
 	struct dynamic_ref *next, *best_next;
-	int most_connections_available;
+	int best_backend_score;
 
 	CHECK_OBJ_NOTNULL(ctx, VRT_CTX_MAGIC);
 	CHECK_OBJ_NOTNULL(dom, DYNAMIC_DOMAIN_MAGIC);
@@ -268,7 +268,7 @@ dom_find_leastconn(VRT_CTX, struct dynamic_domain *dom)
 	
 	next = VTAILQ_FIRST(&dom->refs);
 	best_next = NULL;
-	most_connections_available = INT_MIN;
+	best_backend_score = INT_MIN;
 
 	do {
 		CHECK_OBJ_ORNULL(next, DYNAMIC_REF_MAGIC);
@@ -278,13 +278,17 @@ dom_find_leastconn(VRT_CTX, struct dynamic_domain *dom)
 		if (next->dir != creating && next->dir != NULL && VRT_Healthy(ctx, next->dir, NULL)) {
 			if (VALID_OBJ((struct backend *)next->dir->priv, BACKEND_MAGIC)) {
 				struct backend *be;
-				int connections_available;
+				int backend_score;
 
 				CAST_OBJ_NOTNULL(be, next->dir->priv, BACKEND_MAGIC);
-				connections_available = be->max_connections > 0 ? be->max_connections - be->n_conn : - be->n_conn;
-				if (connections_available > most_connections_available) {
+				/* Backends with more available connections get higher scores */
+				backend_score = be->max_connections > 0 ? be->max_connections - be->n_conn : - be->n_conn;
+				/* Reduce the backend score by the number of connections on the backend connection queue */
+				backend_score -= be->cw_count;
+
+				if (backend_score > best_backend_score) {
 					best_next = next;
-					most_connections_available = connections_available;
+					best_backend_score = backend_score;
 				}
 			}
 		}
@@ -292,7 +296,10 @@ dom_find_leastconn(VRT_CTX, struct dynamic_domain *dom)
 		next = VTAILQ_NEXT(next, list);
 	} while (1);
 
-	if (best_next != NULL) {
+	/* If best_backend_score == 0 then all backends are full and are either not using backend connection queuing (wait_limit) or are their queues are empty,
+	   in which case we want to return NULL and fallback to round-robin.
+	 */
+	if (best_next != NULL && best_backend_score != 0) {
 		return best_next;
 	} else {
 		return NULL;
