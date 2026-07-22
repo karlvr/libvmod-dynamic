@@ -263,7 +263,7 @@ dom_find_leastconn(VRT_CTX, struct dynamic_domain *dom)
 	CHECK_OBJ_NOTNULL(ctx, VRT_CTX_MAGIC);
 	CHECK_OBJ_NOTNULL(dom, DYNAMIC_DOMAIN_MAGIC);
 
-	dom_wait_active(dom);
+	(void) dom_is_active(dom, 1);
 
 	if (dom->status > DYNAMIC_ST_ACTIVE)
 		return (NULL);
